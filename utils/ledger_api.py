@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-
-from collections import namedtuple
+import csv
 import io
 import re
 import subprocess
-import time
-
+from collections import namedtuple
 
 EntryAccount = namedtuple(
-    'EntryAccount',
+    "EntryAccount",
     [
-        'name',
-        'amount',
-        'currency',
+        "name",
+        "amount",
+        "currency",
     ],
 )
 
@@ -85,13 +83,13 @@ class Entry:
         Liabilities:Credit Card
     """
 
-    def __init__(self, **kwargs):
-        self.payee = kwargs['payee']
-        self.date = kwargs.get('date', time.strftime("%F"))
-        self.note = kwargs.get('note')
+    def __init__(self, payee, date, accounts, note=None):
+        self.payee = payee
+        self.date = date
+        self.note = note
 
         self.accounts = []
-        for account in kwargs['accounts']:
+        for account in accounts:
             try:
                 # We got either the 3-argument form...
                 name, amount, currency = account
@@ -101,14 +99,14 @@ class Entry:
                     name, amount = account
                 except ValueError:
                     # ...or the single-argument form with no amount or currency.
-                    name, = account
+                    (name,) = account
                     amount = None
                     currency = None
                 else:
                     # We definitely got the 2-argument form, let's
                     # split it into amount and currency or just
                     # amount.
-                    amount, _, currency = amount.partition(' ')
+                    amount, _, currency = amount.partition(" ")
             finally:
                 # amount may be None if we got the 1-argument form.
                 if amount is not None:
@@ -117,64 +115,66 @@ class Entry:
                     # Avoid storing a currency without a value, it
                     # doesn't make sense and leads to weird bugs.
                     currency = None
-            self.accounts.append(EntryAccount(
-                name=name,
-                amount=amount,
-                currency=currency,
-            ))
+            self.accounts.append(
+                EntryAccount(
+                    name=name,
+                    amount=amount,
+                    currency=currency,
+                )
+            )
 
     currency_conversions = {
-        'USD': {
-            'symbol': '$',
-            'position': 'left',
+        "USD": {
+            "symbol": "$",
+            "position": "left",
         },
-        '$': {
-            'symbol': '$',
-            'position': 'left',
+        "$": {
+            "symbol": "$",
+            "position": "left",
         },
-        '': {
-            'symbol': '',
-            'position': 'left',
-        }
+        "": {
+            "symbol": "",
+            "position": "left",
+        },
     }
 
     @classmethod
     def normalize_currency(cls, currency):
-        rule = cls.currency_conversions.get(currency, '')
+        rule = cls.currency_conversions.get(currency, "")
         if rule:
             return rule
         else:
             return {
-                'symbol': currency,
-                'position': 'right',
+                "symbol": currency,
+                "position": "right",
             }
 
     def __str__(self):
-        output = ['']
-        output.append('{date} {payee}'.format(**vars(self)))
+        output = [""]
+        output.append("{date} {payee}".format(**vars(self)))
         if self.note:
             for line in self.note.splitlines():
-                output.append('    ; {note}'.format(note=line))
+                output.append("    ; {note}".format(note=line))
         for account in self.accounts:
             currency = self.normalize_currency(account.currency)
             if account.amount is None:
-                template = '    {account}'
+                template = "    {account}"
             else:
-                if currency['position'] == 'left':
+                if currency["position"] == "left":
                     account = account._replace(
                         amount="{currency}{amount}".format(
-                            currency=currency['symbol'],
+                            currency=currency["symbol"],
                             amount=account.amount,
                         ),
                     )
-                    template = '    {account:<34s}  {amount:>12}'
+                    template = "    {account:<34s}  {amount:>12}"
                 else:
-                    template = '    {account:<34s}  {amount:>12} {currency}'
+                    template = "    {account:<34s}  {amount:>12} {currency}"
 
             output.append(
                 template.format(
                     account=account.name,
-                    currency=currency['symbol'],
+                    currency=currency["symbol"],
                     amount=account.amount,
                 )
             )
@@ -182,7 +182,6 @@ class Entry:
 
 
 class Journal:
-
     class CannotRevert(Exception):
         pass
 
@@ -192,23 +191,27 @@ class Journal:
     # Not used but let's keep it as documentation of the expected
     # fields of the passed objects.
     LastData = namedtuple(
-        'LastData',
+        "LastData",
         [
-            'last_entry',
-            'old_position',
-            'new_position',
+            "last_entry",
+            "old_position",
+            "new_position",
         ],
     )
 
     def __init__(self, ledger_path, last_data=None):
         self.path = ledger_path
         self.last_data = last_data
+        self.accounts = set()
+        self.payees = set()
+        self.currencies = set()
+        self._parse()
 
     def can_revert(self):
         if self.last_data is None:
             return False
 
-        with open(self.path, 'r') as ledger_file:
+        with open(self.path, "r") as ledger_file:
             current_end = ledger_file.seek(0, 2)
             if current_end != self.last_data.new_position:
                 return False
@@ -225,7 +228,7 @@ class Journal:
         if self.last_data is None:
             raise Journal.CannotRevert()
 
-        with open(self.path, 'a+') as ledger_file:
+        with open(self.path, "a+") as ledger_file:
             if self.last_data.new_position != ledger_file.tell():
                 raise Journal.CannotRevert()
 
@@ -236,11 +239,8 @@ class Journal:
             ledger_file.truncate(self.last_data.old_position)
 
     def append(self, entry):
-        with open(self.path, 'a') as ledger_file:
-            old_position = ledger_file.tell()
+        with open(self.path, "a") as ledger_file:
             print(entry, file=ledger_file)
-            new_position = ledger_file.tell()
-        return old_position, new_position
 
     def accounts(self):
         return self._call("accounts")
@@ -251,8 +251,30 @@ class Journal:
     def currencies(self):
         return self._call("commodities")
 
-    def csv(self, *args):
+    def _csv(self, *args):
         return io.StringIO("\n".join(self._call("csv", *args)))
+
+    def _parse(self):
+        csv_file = self._call("csv")
+        columns = [
+            "date",
+            "code",
+            "payee",
+            "account",
+            "currency",
+            "amount",
+            "reconciled",
+            "note",
+        ]
+        # csv.DictReader can read from "any object that supports the iterator protocol and returns a
+        # string each time its __next__() method is called."  A string is not such an object, but an
+        # open text-file handle is.
+        fake_csv_file = io.StringIO(csv_file)
+        reader = csv.DictReader(fake_csv_file, fieldnames=columns)
+        for row in reader:
+            self.payees.add(row["payee"])
+            self.currencies.add(row["currency"])
+            self.accounts.add(row["account"])
 
     def _call(self, *args):
         try:
@@ -264,16 +286,15 @@ class Journal:
         except subprocess.CalledProcessError as e:
             raise Journal.LedgerCliError() from e
 
-        return output.strip().splitlines()
+        return output
 
     def __iter__(self):
-        date_regexp = r'\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}'
+        date_regexp = r"\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}"
+
         def prepare_entry(entry_lines):
             match = re.match(
-                '({date}){cleared}\s+({payee})'.format(
-                    date=date_regexp,
-                    cleared=r'(?: [!*])?',
-                    payee=r'.*'
+                "({date}){cleared}\s+({payee})".format(
+                    date=date_regexp, cleared=r"(?: [!*])?", payee=r".*"
                 ),
                 entry_lines[0],
             )
@@ -281,7 +302,7 @@ class Journal:
             payee = match.group(2)
 
             match = re.fullmatch(
-                '\s*;\s*(.*)',
+                "\s*;\s*(.*)",
                 entry_lines[1],
             )
             if match:
@@ -289,37 +310,30 @@ class Journal:
             else:
                 # In Django strings usually aren't nullable, let's
                 # keep this convention and just store an empty string.
-                note = ''
+                note = ""
 
             return {
-                'body': "\n".join(entry_lines),
-                'date': date,
-                'payee': payee,
-                'note': note,
+                "body": "\n".join(entry_lines),
+                "date": date,
+                "payee": payee,
+                "note": note,
             }
 
-        entry = []
-        with open(self.path, 'r') as ledger_file:
-            for line in map(str.rstrip, ledger_file):
-                if not entry:
-                    # Skipping the empty space and non-entries between entries.
-                    if re.match(r'{} '.format(date_regexp), line):
-                        # A beginning of a next entry.
-                        entry.append(line)
-                else:
-                    # In the middle of parsing an entry.
-                    if line:
-                        # Let's parse some more of it.
-                        entry.append(line)
-                    else:
-                        # End of an entry.
-                        yield prepare_entry(entry)
-                        entry = []
-            if entry:
-                yield prepare_entry(entry)
+        with open(self.path, "r") as ledger_file:
+            entry = []
+            for line in map(str.strip, ledger_file):
+                # If there's a line, it's part of an entry
+                if line:
+                    entry.append(line)
+                # If only whitespace is found and there are lines in entry,
+                # then the entry has ended
+                elif entry:
+                    yield prepare_entry(entry)
+                    entry = []
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import doctest
     import sys
+
     sys.exit(doctest.testmod()[0])

@@ -166,9 +166,9 @@ def submit(request):
     ledger_errors = False
 
     try:
-        accounts = journal.accounts()
-        currencies = journal.currencies()
-        payees = journal.payees()
+        accounts = journal.accounts
+        currencies = journal.currencies
+        payees = journal.payees
     except journal.LedgerCliError as e:
         accounts = currencies = payees = []
         ledger_errors = e.__cause__
@@ -353,8 +353,8 @@ class RuleViewBase(CreateView):
         kwargs = super().get_form_kwargs()
         ledger_path = settings.LEDGER_PATH
         journal = ledger_api.Journal(ledger_path)
-        kwargs["accounts"] = journal.accounts()
-        kwargs["payees"] = journal.payees()
+        kwargs["accounts"] = journal.accounts
+        kwargs["payees"] = journal.payees
         kwargs["user"] = self.request.user
         return kwargs
 
